@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Virtual Electric Field Mapping Lab</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0f1117; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useRef } = React;
+
+    const W = 700, H = 520;
+    const K = 8000;
+    const GRID_SPACING = 35;
+    const ARROW_SCALE = 18;
+    const BASE_LINES = 8;
+    const PLATE_X = W - 80;
+
+    // ── Field calculation ─────────────────────────────────────────────────────
+    // hasPlate=true: use method of images — each real charge gets a mirror charge
+    // of opposite sign reflected across PLATE_X. Field inside conductor = zero.
+    function getField(charges, x, y, hasPlate = false) {
+      if (hasPlate && x >= PLATE_X) return { ex: 0, ey: 0 };
+
+      let ex = 0, ey = 0;
+      const allCharges = [...charges];
+
+      if (hasPlate) {
+        for (const c of charges) {
+          if (c.x < PLATE_X) {
+            allCharges.push({ ...c, q: -c.q, x: 2 * PLATE_X - c.x, id: -(c.id + 1000) });
+          }
+        }
+      }
+
+      for (const c of allCharges) {
+        const dx = x - c.x, dy = y - c.y;
+        const r2 = dx * dx + dy * dy;
+        if (r2 < 9) continue;
+        const r = Math.sqrt(r2);
+        const mag = K * c.mag / r2;
+        const sign = c.q > 0 ? 1 : -1;
+        ex += sign * mag * dx / r;
+        ey += sign * mag * dy / r;
+      }
+      return { ex, ey };
+    }
+
+    // ── Field line tracer ─────────────────────────────────────────────────────
+    function traceFieldLine(charges, startX, startY, forward, hasPlate = false, steps = 500, dt = 4) {
+      const pts = [[startX, startY]];
+      let x = startX, y = startY;
+      for (let i = 0; i < steps; i++) {
+        const { ex, ey } = getField(charges, x, y, hasPlate);
+        const mag = Math.sqrt(ex * ex + ey * ey);
+        if (mag < 0.001) break;
+        const nx = forward ? ex / mag : -ex / mag;
+        const ny = forward ? ey / mag : -ey / mag;
+        x += nx * dt; y += ny * dt;
+        if (hasPlate && x >= PLATE_X - 2) { pts.push([PLATE_X - 2, y]); break; }
+        pts.push([x, y]);
+        if (x < -30 || x > W + 30 || y < -30 || y > H + 30) break;
+        let stopped = false;
+        for (const c of charges) {
+          if (c.q < 0 && Math.hypot(x - c.x, y - c.y) < 16) {
+            pts.push([c.x, c.y]); stopped = true; break;
+          }
+        }
+        if (stopped) break;
+      }
+      return pts;
+    }
+
+    // ── Field lines generator ─────────────────────────────────────────────────
+    function getFieldLines(charges, hasPlate = false) {
+      const lines = [];
+      const hasPos = charges.some(c => c.q > 0);
+      for (const c of charges) {
+        const N = BASE_LINES * c.mag;
+        if (c.q > 0) {
+          for (let i = 0; i < N; i++) {
+            const angle = (2 * Math.PI * i) / N;
+            const sx = c.x + 22 * Math.cos(angle), sy = c.y + 22 * Math.sin(angle);
+            if (hasPlate && sx >= PLATE_X) continue;
+            lines.push({ pts: traceFieldLine(charges, sx, sy, true, hasPlate) });
+          }
+        } else if (!hasPos) {
+          for (let i = 0; i < N; i++) {
+            const angle = (2 * Math.PI * i) / N;
+            const sx = c.x + 22 * Math.cos(angle), sy = c.y + 22 * Math.sin(angle);
+            const pts = traceFieldLine(charges, sx, sy, false, hasPlate);
+            lines.push({ pts: [...pts].reverse() });
+          }
+        }
+      }
+      return lines;
+    }
+
+    // ── Parts ─────────────────────────────────────────────────────────────────
+    const PARTS = [
+      { id: 1, label: "Part 1 — Single Negative Charge",
+        hint: "Observe: where do field lines point? Try increasing the magnitude to 4q.",
+        preset: [{ q: -1, mag: 2, x: W/2, y: H/2 }] },
+      { id: 2, label: "Part 2 — Single Positive Charge",
+        hint: "Where do field lines begin and end? Compare to Part 1.",
+        preset: [{ q: 1, mag: 2, x: W/2, y: H/2 }] },
+      { id: 3, label: "Part 3 — Unlike Charges (Dipole)",
+        hint: "Try different magnitudes on each charge and see how lines redistribute.",
+        preset: [{ q: 1, mag: 2, x: W/2 - 100, y: H/2 }, { q: -1, mag: 2, x: W/2 + 100, y: H/2 }] },
+      { id: 4, label: "Part 4 — Like Charges",
+        hint: "Try making one charge stronger — how does the neutral point shift?",
+        preset: [{ q: 1, mag: 2, x: W/2 - 100, y: H/2 }, { q: 1, mag: 2, x: W/2 + 100, y: H/2 }] },
+      { id: 5, label: "Part 5 — Charge + Conducting Plate",
+        hint: "Drag the charge closer and farther from the plate. Lines hit the surface at exactly 90°. Toggle 'Show image charge' to reveal why.",
+        preset: [{ q: 1, mag: 2, x: W/2 - 80, y: H/2 }],
+        plate: true },
+    ];
+
+    const MAG_COLORS_POS = ["", "#f4a261", "#e8622a", "#c93a0a", "#8b1a00"];
+    const MAG_COLORS_NEG = ["", "#74b9ff", "#3a8fe8", "#1a5ec9", "#0a2e8b"];
+
+    function Question({ pid, qid, label, answers, setAnswers }) {
+      const key = `${pid}-${qid}`;
+      return (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 11, color: "#888", marginBottom: 4, lineHeight: 1.4 }}>{label}</div>
+          <textarea value={answers[key] || ""} onChange={e => setAnswers(a => ({ ...a, [key]: e.target.value }))}
+            rows={2} style={{ width: "100%", background: "#0f1117", border: "1px solid #2a3040",
+              borderRadius: 4, color: "#c8bea0", fontSize: 11, padding: "5px 7px", resize: "vertical",
+              fontFamily: "Georgia, serif", boxSizing: "border-box" }} />
+        </div>
+      );
+    }
+
+    function App() {
+      const [partIdx, setPartIdx] = useState(0);
+      const [charges, setCharges] = useState(PARTS[0].preset.map((c, i) => ({ ...c, id: i })));
+      const [nextId, setNextId] = useState(10);
+      const [addType, setAddType] = useState(1);
+      const [addMag, setAddMag] = useState(2);
+      const [selectedId, setSelectedId] = useState(null);
+      const [dragging, setDragging] = useState(null);
+      const [showVectors, setShowVectors] = useState(false);
+      const [showLines, setShowLines] = useState(true);
+      const [showImage, setShowImage] = useState(false);
+      const [answers, setAnswers] = useState({});
+      const svgRef = useRef();
+      const part = PARTS[partIdx];
+      const hasPlate = !!part.plate;
+
+      const fieldLines = showLines && charges.length > 0 ? getFieldLines(charges, hasPlate) : [];
+
+      const gridVectors = [];
+      if (showVectors && charges.length > 0) {
+        for (let gx = GRID_SPACING; gx < W; gx += GRID_SPACING) {
+          for (let gy = GRID_SPACING; gy < H; gy += GRID_SPACING) {
+            if (hasPlate && gx >= PLATE_X) continue;
+            const { ex, ey } = getField(charges, gx, gy, hasPlate);
+            const mag = Math.sqrt(ex * ex + ey * ey);
+            if (mag < 0.1) continue;
+            const scale = Math.min(ARROW_SCALE, ARROW_SCALE * Math.log1p(mag) / Math.log1p(200));
+            gridVectors.push({ x: gx, y: gy, dx: (ex / mag) * scale, dy: (ey / mag) * scale });
+          }
+        }
+      }
+
+      const selectedCharge = charges.find(c => c.id === selectedId) || null;
+      const imageCharges = hasPlate ? charges.map(c => ({
+        ...c, q: -c.q, x: 2 * PLATE_X - c.x, id: -(c.id + 1000)
+      })) : [];
+
+      const loadPart = (idx) => {
+        setPartIdx(idx); setCharges(PARTS[idx].preset.map((c, i) => ({ ...c, id: i })));
+        setNextId(10); setSelectedId(null); setShowImage(false);
+      };
+
+      const handleSvgClick = (e) => {
+        if (dragging !== null) return;
+        const rect = svgRef.current.getBoundingClientRect();
+        const x = e.clientX - rect.left, y = e.clientY - rect.top;
+        if (hasPlate && x >= PLATE_X - 10) return;
+        for (const c of charges) { if (Math.hypot(x - c.x, y - c.y) < 22) return; }
+        const newId = nextId;
+        setCharges(prev => [...prev, { q: addType, mag: addMag, x, y, id: newId }]);
+        setSelectedId(newId); setNextId(n => n + 1);
+      };
+
+      const startDrag = (e, id) => { e.stopPropagation(); setSelectedId(id); setDragging(id); };
+      const onMouseMove = (e) => {
+        if (dragging === null) return;
+        const rect = svgRef.current.getBoundingClientRect();
+        let x = e.clientX - rect.left, y = e.clientY - rect.top;
+        if (hasPlate) x = Math.min(x, PLATE_X - 30);
+        setCharges(prev => prev.map(c => c.id === dragging ? { ...c, x, y } : c));
+      };
+      const onMouseUp = () => setDragging(null);
+      const removeCharge = (e, id) => {
+        e.preventDefault();
+        setCharges(prev => prev.filter(c => c.id !== id));
+        if (selectedId === id) setSelectedId(null);
+      };
+      const updateSelectedMag = (mag) => setCharges(prev => prev.map(c => c.id === selectedId ? { ...c, mag } : c));
+      const chargeRadius = (mag) => 14 + mag * 3;
+
+      return (
+        <div style={{ fontFamily: "'Georgia', serif", background: "#0f1117", minHeight: "100vh", color: "#e8e0d0", padding: "20px" }}>
+          <div style={{ maxWidth: 980, margin: "0 auto" }}>
+            <div style={{ textAlign: "center", marginBottom: 18 }}>
+              <div style={{ fontSize: 11, letterSpacing: 4, color: "#7c9e8a", textTransform: "uppercase", marginBottom: 4 }}>Modeling Physics · E1 Unit</div>
+              <h1 style={{ fontSize: 26, fontWeight: "normal", color: "#d4c9a8", margin: 0 }}>Virtual Electric Field Mapping Lab</h1>
+            </div>
+
+            <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
+              {PARTS.map((p, i) => (
+                <button key={p.id} onClick={() => loadPart(i)}
+                  style={{ padding: "6px 12px", fontSize: 12, borderRadius: 4, border: "1px solid",
+                    background: i === partIdx ? "#2a5c3f" : "#1a1f2a",
+                    borderColor: i === partIdx ? "#4a9e6f" : "#333",
+                    color: i === partIdx ? "#a8e6c0" : "#888", cursor: "pointer" }}>
+                  Part {p.id}
+                </button>
+              ))}
+            </div>
+
+            <div style={{ display: "flex", gap: 18 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ background: "#151820", borderRadius: 8, border: "1px solid #2a3040", overflow: "hidden" }}>
+                  <svg ref={svgRef} width={W} height={H}
+                    style={{ display: "block", cursor: dragging ? "grabbing" : "crosshair" }}
+                    onClick={handleSvgClick} onMouseMove={onMouseMove} onMouseUp={onMouseUp} onMouseLeave={onMouseUp}>
+                    <defs>
+                      <marker id="arr-vec" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+                        <path d="M0,0 L0,6 L6,3 z" fill="rgba(180,220,180,0.7)" />
+                      </marker>
+                      {hasPlate && (
+                        <clipPath id="left-of-plate">
+                          <rect x={0} y={0} width={PLATE_X} height={H} />
+                        </clipPath>
+                      )}
+                    </defs>
+
+                    {/* Grid lines */}
+                    {Array.from({ length: Math.floor(W/50)+1 }, (_, i) => (
+                      <line key={`gv${i}`} x1={i*50} y1={0} x2={i*50} y2={H} stroke="#1e2535" strokeWidth={0.5} />
+                    ))}
+                    {Array.from({ length: Math.floor(H/50)+1 }, (_, i) => (
+                      <line key={`gh${i}`} x1={0} y1={i*50} x2={W} y2={i*50} stroke="#1e2535" strokeWidth={0.5} />
+                    ))}
+
+                    {/* Conductor */}
+                    {hasPlate && (
+                      <g>
+                        {/* Dark out the region behind the plate */}
+                        <rect x={PLATE_X} y={0} width={W - PLATE_X} height={H} fill="rgba(15,17,23,0.9)" />
+                        {/* Plate body */}
+                        <rect x={PLATE_X} y={30} width={26} height={H - 60} fill="#2a3245" stroke="#4a5a7a" strokeWidth={2} rx={3} />
+                        {/* Near-face induced − charges */}
+                        {charges.map((c, ci) => Array.from({ length: c.mag * 3 }, (_, si) => (
+                          <text key={`near-${ci}-${si}`}
+                            x={PLATE_X + 5} y={70 + (si / (c.mag * 3 - 0.5)) * (H - 140)}
+                            fill={c.q > 0 ? "#74b9ff" : "#f4a261"} fontSize={12} fontWeight="bold"
+                            style={{ userSelect: "none", pointerEvents: "none" }}>
+                            {c.q > 0 ? "−" : "+"}
+                          </text>
+                        )))}
+                        {/* Far-face induced + charges */}
+                        {charges.map((c, ci) => Array.from({ length: c.mag * 3 }, (_, si) => (
+                          <text key={`far-${ci}-${si}`}
+                            x={PLATE_X + 17} y={70 + (si / (c.mag * 3 - 0.5)) * (H - 140)}
+                            fill={c.q > 0 ? "#f4a261" : "#74b9ff"} fontSize={12} fontWeight="bold"
+                            style={{ userSelect: "none", pointerEvents: "none" }}>
+                            {c.q > 0 ? "+" : "−"}
+                          </text>
+                        )))}
+                        <text x={PLATE_X + 13} y={H - 14} textAnchor="middle" fill="#4a5a7a" fontSize={9}
+                          style={{ userSelect: "none" }}>conductor</text>
+                      </g>
+                    )}
+
+                    {/* Field lines (clipped left of plate) */}
+                    <g clipPath={hasPlate ? "url(#left-of-plate)" : undefined}>
+                      {fieldLines.map(({ pts }, li) => {
+                        if (pts.length < 2) return null;
+                        const d = pts.map((p, i) => `${i===0?"M":"L"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ");
+                        const mid = Math.floor(pts.length * 0.55);
+                        const p1 = pts[mid], p2 = pts[Math.min(mid+1, pts.length-1)];
+                        const ang = Math.atan2(p2[1]-p1[1], p2[0]-p1[0]) * 180 / Math.PI;
+                        return (
+                          <g key={li}>
+                            <path d={d} fill="none" stroke="rgba(100,180,130,0.55)" strokeWidth={1.2} />
+                            <polygon points="-5,-3 5,0 -5,3"
+                              transform={`translate(${p1[0]},${p1[1]}) rotate(${ang})`}
+                              fill="rgba(120,210,150,0.85)" />
+                          </g>
+                        );
+                      })}
+                    </g>
+
+                    {/* Vector grid */}
+                    {gridVectors.map((v, i) => (
+                      <line key={i} x1={v.x} y1={v.y} x2={v.x+v.dx} y2={v.y+v.dy}
+                        stroke="rgba(180,220,180,0.6)" strokeWidth={1.2} markerEnd="url(#arr-vec)" />
+                    ))}
+
+                    {/* Image charges (optional reveal) */}
+                    {hasPlate && showImage && imageCharges.map(c => {
+                      const r = chargeRadius(c.mag);
+                      const col = c.q > 0 ? MAG_COLORS_POS[c.mag] : MAG_COLORS_NEG[c.mag];
+                      return (
+                        <g key={`img-${c.id}`} style={{ opacity: 0.5 }}>
+                          <circle cx={c.x} cy={c.y} r={r}
+                            fill={c.q > 0 ? "rgba(244,150,80,0.1)" : "rgba(100,160,255,0.1)"}
+                            stroke={col} strokeWidth={1.5} strokeDasharray="5 3" />
+                          <text x={c.x} y={c.y+2} textAnchor="middle" fill={col} fontSize={r+2} fontWeight="bold"
+                            style={{ userSelect:"none", pointerEvents:"none" }}>{c.q>0?"+":"−"}</text>
+                          <text x={c.x} y={c.y-r-5} textAnchor="middle" fill={col} fontSize={9}
+                            style={{ userSelect:"none", pointerEvents:"none" }}>image</text>
+                        </g>
+                      );
+                    })}
+
+                    {/* Real charges */}
+                    {charges.map(c => {
+                      const r = chargeRadius(c.mag);
+                      const isPos = c.q > 0;
+                      const col = isPos ? MAG_COLORS_POS[c.mag] : MAG_COLORS_NEG[c.mag];
+                      return (
+                        <g key={c.id} onMouseDown={e => startDrag(e, c.id)} onContextMenu={e => removeCharge(e, c.id)}
+                          style={{ cursor: "grab" }}>
+                          {c.id === selectedId && <circle cx={c.x} cy={c.y} r={r+6} fill="none"
+                            stroke="rgba(255,255,255,0.4)" strokeWidth={1.5} strokeDasharray="4 3" />}
+                          <circle cx={c.x} cy={c.y} r={r}
+                            fill={isPos ? `rgba(244,150,80,${0.08+c.mag*0.07})` : `rgba(100,160,255,${0.08+c.mag*0.07})`}
+                            stroke={col} strokeWidth={2} />
+                          <text x={c.x} y={c.y+2} textAnchor="middle" fill={col} fontSize={r+2} fontWeight="bold"
+                            style={{ userSelect:"none", pointerEvents:"none" }}>{isPos?"+":"−"}</text>
+                          <text x={c.x} y={c.y+r+1} textAnchor="middle" fill={col} fontSize={9} opacity={0.8}
+                            style={{ userSelect:"none", pointerEvents:"none" }}>{c.mag}q</text>
+                        </g>
+                      );
+                    })}
+                  </svg>
+                </div>
+
+                {/* Controls */}
+                <div style={{ display:"flex", gap:10, marginTop:10, alignItems:"center", flexWrap:"wrap" }}>
+                  <div style={{ display:"flex", gap:6 }}>
+                    <button onClick={() => setAddType(1)}
+                      style={{ padding:"6px 14px", borderRadius:4, border:"2px solid",
+                        background: addType===1 ? "rgba(244,150,80,0.2)" : "#1a1f2a",
+                        borderColor: addType===1 ? "#f4a261" : "#333",
+                        color:"#f4a261", cursor:"pointer", fontWeight:"bold", fontSize:16 }}>+ charge</button>
+                    <button onClick={() => setAddType(-1)}
+                      style={{ padding:"6px 14px", borderRadius:4, border:"2px solid",
+                        background: addType===-1 ? "rgba(100,160,255,0.2)" : "#1a1f2a",
+                        borderColor: addType===-1 ? "#74b9ff" : "#333",
+                        color:"#74b9ff", cursor:"pointer", fontWeight:"bold", fontSize:16 }}>− charge</button>
+                  </div>
+                  <div style={{ display:"flex", alignItems:"center", gap:6, background:"#1a1f2a", borderRadius:4, padding:"4px 10px", border:"1px solid #2a3040" }}>
+                    <span style={{ fontSize:11, color:"#555" }}>Magnitude:</span>
+                    {[1,2,3,4].map(m => (
+                      <button key={m} onClick={() => setAddMag(m)}
+                        style={{ width:28, height:28, borderRadius:4, border:"1px solid",
+                          background: addMag===m ? "#2a4a35" : "transparent",
+                          borderColor: addMag===m ? "#4a9e6f" : "#333",
+                          color: addMag===m ? "#a8e6c0" : "#555", cursor:"pointer", fontSize:12 }}>{m}q</button>
+                    ))}
+                  </div>
+                  <label style={{ fontSize:13, color:"#888", display:"flex", alignItems:"center", gap:6 }}>
+                    <input type="checkbox" checked={showLines} onChange={e => setShowLines(e.target.checked)} /> Field lines
+                  </label>
+                  <label style={{ fontSize:13, color:"#888", display:"flex", alignItems:"center", gap:6 }}>
+                    <input type="checkbox" checked={showVectors} onChange={e => setShowVectors(e.target.checked)} /> Vectors
+                  </label>
+                  {hasPlate && (
+                    <label style={{ fontSize:13, color:"#a0956f", display:"flex", alignItems:"center", gap:6 }}>
+                      <input type="checkbox" checked={showImage} onChange={e => setShowImage(e.target.checked)} /> Show image charge
+                    </label>
+                  )}
+                  <button onClick={() => loadPart(partIdx)}
+                    style={{ marginLeft:"auto", padding:"5px 12px", fontSize:12, borderRadius:4,
+                      background:"#1a1f2a", border:"1px solid #444", color:"#aaa", cursor:"pointer" }}>Reset</button>
+                </div>
+                <div style={{ fontSize:11, color:"#444", marginTop:4 }}>
+                  Click canvas = add charge · Click charge = select · Drag = move · Right-click = remove
+                  {hasPlate && <span style={{ color:"#3a3020" }}> · Charges locked left of plate</span>}
+                </div>
+              </div>
+
+              {/* Right panel */}
+              <div style={{ width:240, display:"flex", flexDirection:"column", gap:12 }}>
+                <div style={{ background:"#151820", borderRadius:8, border:`1px solid ${selectedCharge?"#3a5a44":"#2a3040"}`, padding:14, minHeight:100 }}>
+                  {selectedCharge ? (
+                    <>
+                      <div style={{ fontSize:12, fontWeight:"bold", color:"#7c9e8a", marginBottom:10 }}>
+                        Selected: <span style={{ color: selectedCharge.q>0?"#f4a261":"#74b9ff", fontSize:15 }}>
+                          {selectedCharge.q>0?"+":"−"}{selectedCharge.mag}q
+                        </span>
+                        <span style={{ color:"#444", fontWeight:"normal", fontSize:10, marginLeft:6 }}>({BASE_LINES*selectedCharge.mag} lines)</span>
+                      </div>
+                      <div style={{ fontSize:11, color:"#555", marginBottom:8 }}>Adjust magnitude:</div>
+                      <div style={{ display:"flex", gap:6 }}>
+                        {[1,2,3,4].map(m => (
+                          <button key={m} onClick={() => updateSelectedMag(m)}
+                            style={{ flex:1, padding:"8px 0", borderRadius:4, border:"1px solid",
+                              background: selectedCharge.mag===m?(selectedCharge.q>0?"rgba(244,150,80,0.25)":"rgba(100,160,255,0.25)"):"transparent",
+                              borderColor: selectedCharge.mag===m?(selectedCharge.q>0?"#f4a261":"#74b9ff"):"#2a3040",
+                              color: selectedCharge.mag===m?(selectedCharge.q>0?"#f4a261":"#74b9ff"):"#444",
+                              cursor:"pointer", fontSize:12, fontWeight:"bold" }}>{m}q</button>
+                        ))}
+                      </div>
+                    </>
+                  ) : (
+                    <div style={{ fontSize:11, color:"#3a4050", fontStyle:"italic", lineHeight:1.7 }}>
+                      Click a charge to select it, then adjust its magnitude here (1q–4q).
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ background:"#151820", borderRadius:8, border:"1px solid #2a3040", padding:14 }}>
+                  <div style={{ fontSize:13, fontWeight:"bold", color:"#7c9e8a", marginBottom:8 }}>{part.label}</div>
+                  <div style={{ fontSize:12, color:"#a0956f", lineHeight:1.6 }}>{part.hint}</div>
+                  {hasPlate && (
+                    <div style={{ fontSize:10, color:"#3a5040", marginTop:8, lineHeight:1.5, borderTop:"1px solid #1e3a24", paddingTop:8 }}>
+                      Physics: method of images. A virtual mirror charge of opposite sign placed symmetrically behind the plate produces the exact boundary condition — field lines perpendicular to the surface, zero field inside.
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ background:"#151820", borderRadius:8, border:"1px solid #2a3040", padding:14, flex:1 }}>
+                  <div style={{ fontSize:12, fontWeight:"bold", color:"#7c9e8a", marginBottom:10 }}>Lab Questions</div>
+                  {partIdx < 2 && <>
+                    <Question pid={partIdx} qid="q1" label="1. Where do field lines begin?" answers={answers} setAnswers={setAnswers} />
+                    <Question pid={partIdx} qid="q2" label="2. Where do field lines end?" answers={answers} setAnswers={setAnswers} />
+                    <Question pid={partIdx} qid="q3" label="3. How many lines could you draw?" answers={answers} setAnswers={setAnswers} />
+                  </>}
+                  {partIdx >= 2 && partIdx < 4 && <>
+                    <Question pid={partIdx} qid="q1" label="1. Where do lines begin / end?" answers={answers} setAnswers={setAnswers} />
+                    <Question pid={partIdx} qid="q2" label="2. Do field lines ever cross? Why not?" answers={answers} setAnswers={setAnswers} />
+                    <Question pid={partIdx} qid="q3" label="3. Where is the field strongest?" answers={answers} setAnswers={setAnswers} />
+                  </>}
+                  {partIdx === 4 && <>
+                    <Question pid={partIdx} qid="q1" label="1. At what angle do lines meet the plate?" answers={answers} setAnswers={setAnswers} />
+                    <Question pid={partIdx} qid="q2" label="2. What charge appears on the near face? Far face?" answers={answers} setAnswers={setAnswers} />
+                    <Question pid={partIdx} qid="q3" label="3. Enable 'Show image charge' — what does this tell you about how conductors work?" answers={answers} setAnswers={setAnswers} />
+                  </>}
+                </div>
+
+                <div style={{ background:"#0d1a12", borderRadius:8, border:"1px solid #1e3a24", padding:12 }}>
+                  <div style={{ fontSize:11, fontWeight:"bold", color:"#4a9e6f", marginBottom:8, letterSpacing:1, textTransform:"uppercase" }}>Key Concepts</div>
+                  {["Lines start on + and end on −","Arrow = force on + test charge","More charge → more field lines","Denser lines = stronger field","Lines never cross","⊥ to conductor surface","E = 0 inside a conductor"].map((txt, i) => (
+                    <div key={i} style={{ fontSize:11, color:"#6aaa7a", marginBottom:5, display:"flex", gap:6 }}>
+                      <span style={{ color:"#2d6e44" }}>▸</span> {txt}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
