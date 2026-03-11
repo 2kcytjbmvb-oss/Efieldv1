@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Virtual Electric Field Mapping Lab</title>
+  <title>Virtual Electric Field Mapping Lab – E1</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
@@ -16,89 +16,137 @@
   <div id="root"></div>
 
   <script type="text/babel">
-    const { useState, useRef } = React;
+    const { useState, useRef, useMemo } = React;
 
-    const W = 700, H = 520;
+    const W = 700, H = 530;
     const K = 8000;
     const GRID_SPACING = 35;
     const ARROW_SCALE = 18;
     const BASE_LINES = 8;
-    const PLATE_X = W - 80;
 
-    // ── Field calculation ─────────────────────────────────────────────────────
-    // hasPlate=true: use method of images — each real charge gets a mirror charge
-    // of opposite sign reflected across PLATE_X. Field inside conductor = zero.
-    function getField(charges, x, y, hasPlate = false) {
-      if (hasPlate && x >= PLATE_X) return { ex: 0, ey: 0 };
+    // Parallel plate geometry constants
+    const PP_N  = 14;   // point charges per plate
+    const PP_Y1 = 85;   // plate top Y
+    const PP_Y2 = 445;  // plate bottom Y
+    const PP_VW = 16;   // visual half-width of plate rect
 
+    // ── Physics ───────────────────────────────────────────────────────────────
+
+    function getField(charges, x, y, plateX = null) {
+      if (plateX !== null && x >= plateX) return { ex: 0, ey: 0 };
       let ex = 0, ey = 0;
-      const allCharges = [...charges];
-
-      if (hasPlate) {
-        for (const c of charges) {
-          if (c.x < PLATE_X) {
-            allCharges.push({ ...c, q: -c.q, x: 2 * PLATE_X - c.x, id: -(c.id + 1000) });
-          }
-        }
-      }
-
-      for (const c of allCharges) {
+      const all = plateX !== null
+        ? [...charges, ...charges.filter(c => c.x < plateX).map(c => ({
+            ...c, q: -c.q, x: 2 * plateX - c.x, id: -(c.id + 1000)
+          }))]
+        : charges;
+      for (const c of all) {
         const dx = x - c.x, dy = y - c.y;
         const r2 = dx * dx + dy * dy;
         if (r2 < 9) continue;
         const r = Math.sqrt(r2);
-        const mag = K * c.mag / r2;
+        const fmag = K * c.mag / r2;
         const sign = c.q > 0 ? 1 : -1;
-        ex += sign * mag * dx / r;
-        ey += sign * mag * dy / r;
+        ex += sign * fmag * dx / r;
+        ey += sign * fmag * dy / r;
       }
       return { ex, ey };
     }
 
-    // ── Field line tracer ─────────────────────────────────────────────────────
-    function traceFieldLine(charges, startX, startY, forward, hasPlate = false, steps = 500, dt = 4) {
-      const pts = [[startX, startY]];
-      let x = startX, y = startY;
+    function traceFieldLine(charges, sx, sy, forward, plateX = null, steps = 600, dt = 4) {
+      const pts = [[sx, sy]];
+      let x = sx, y = sy;
       for (let i = 0; i < steps; i++) {
-        const { ex, ey } = getField(charges, x, y, hasPlate);
+        const { ex, ey } = getField(charges, x, y, plateX);
         const mag = Math.sqrt(ex * ex + ey * ey);
         if (mag < 0.001) break;
         const nx = forward ? ex / mag : -ex / mag;
         const ny = forward ? ey / mag : -ey / mag;
         x += nx * dt; y += ny * dt;
-        if (hasPlate && x >= PLATE_X - 2) { pts.push([PLATE_X - 2, y]); break; }
+        if (plateX !== null && x >= plateX - 2) { pts.push([plateX - 2, y]); break; }
         pts.push([x, y]);
-        if (x < -30 || x > W + 30 || y < -30 || y > H + 30) break;
-        let stopped = false;
+        if (x < -50 || x > W + 50 || y < -50 || y > H + 50) break;
         for (const c of charges) {
           if (c.q < 0 && Math.hypot(x - c.x, y - c.y) < 16) {
-            pts.push([c.x, c.y]); stopped = true; break;
+            pts.push([c.x, c.y]); return pts;
           }
         }
-        if (stopped) break;
       }
       return pts;
     }
 
-    // ── Field lines generator ─────────────────────────────────────────────────
-    function getFieldLines(charges, hasPlate = false) {
+    // Standard field lines for Parts 1–5
+    function computeFieldLines(charges, plateX = null) {
       const lines = [];
       const hasPos = charges.some(c => c.q > 0);
       for (const c of charges) {
         const N = BASE_LINES * c.mag;
         if (c.q > 0) {
           for (let i = 0; i < N; i++) {
-            const angle = (2 * Math.PI * i) / N;
-            const sx = c.x + 22 * Math.cos(angle), sy = c.y + 22 * Math.sin(angle);
-            if (hasPlate && sx >= PLATE_X) continue;
-            lines.push({ pts: traceFieldLine(charges, sx, sy, true, hasPlate) });
+            const a = (2 * Math.PI * i) / N;
+            const sx = c.x + 22 * Math.cos(a), sy = c.y + 22 * Math.sin(a);
+            if (plateX !== null && sx >= plateX) continue;
+            lines.push(traceFieldLine(charges, sx, sy, true, plateX));
           }
         } else if (!hasPos) {
           for (let i = 0; i < N; i++) {
-            const angle = (2 * Math.PI * i) / N;
-            const sx = c.x + 22 * Math.cos(angle), sy = c.y + 22 * Math.sin(angle);
-            const pts = traceFieldLine(charges, sx, sy, false, hasPlate);
-            lines.push({ pts: [...pts].reverse() });
+            const a = (2 * Math.PI * i) / N;
+            const sx = c.x + 22 * Math.cos(a), sy = c.y + 22 * Math.sin(a);
+            const pts = traceFieldLine(charges, sx, sy, false, plateX);
+            lines.push([...pts].reverse());
+          }
+        }
+      }
+      return lines;
+    }
+
+    // Generate discrete point charges representing a plate
+    function genPlateCharges(px, sign, mag, idBase) {
+      return Array.from({ length: PP_N }, (_, i) => ({
+        q: sign, mag,
+        x: px,
+        y: PP_Y1 + (PP_Y2 - PP_Y1) * i / (PP_N - 1),
+        id: idBase + i,
+        isPlate: true,
+      }));
+    }
+
+    // Dedicated field-line tracer for parallel plates (fixed count, no per-charge scaling)
+    function computeParallelPlateLines(allCharges, leftX, rightX, leftSign, rightSign) {
+      const lines = [];
+      const N = 13; // number of field lines
+
+      if (leftSign > 0 && rightSign < 0) {
+        // Classic capacitor: + left, − right → lines go left→right
+        for (let i = 0; i < N; i++) {
+          const sy = PP_Y1 + 18 + (PP_Y2 - PP_Y1 - 36) * i / (N - 1);
+          lines.push(traceFieldLine(allCharges, leftX + PP_VW + 4, sy, true, null, 1000, 3));
+        }
+      } else if (leftSign < 0 && rightSign > 0) {
+        // + right, − left → lines go right→left (trace forward from right plate)
+        for (let i = 0; i < N; i++) {
+          const sy = PP_Y1 + 18 + (PP_Y2 - PP_Y1 - 36) * i / (N - 1);
+          lines.push(traceFieldLine(allCharges, rightX - PP_VW - 4, sy, true, null, 1000, 3));
+        }
+      } else {
+        // Same-sign plates: draw lines fanning outward from each plate's outer face
+        const NO = 7;
+        for (let i = 0; i < NO; i++) {
+          const sy = PP_Y1 + 20 + (PP_Y2 - PP_Y1 - 40) * i / (NO - 1);
+          if (leftSign > 0) {
+            // Positive left plate: lines go left (outward)
+            lines.push(traceFieldLine(allCharges, leftX - PP_VW - 4, sy, true, null, 600, 3));
+          } else {
+            // Negative left plate: trace backward = lines arrive from left
+            const pts = traceFieldLine(allCharges, leftX - PP_VW - 4, sy, false, null, 600, 3);
+            lines.push([...pts].reverse());
+          }
+          if (rightSign > 0) {
+            // Positive right plate: lines go right (outward)
+            lines.push(traceFieldLine(allCharges, rightX + PP_VW + 4, sy, true, null, 600, 3));
+          } else {
+            const pts = traceFieldLine(allCharges, rightX + PP_VW + 4, sy, false, null, 600, 3);
+            lines.push([...pts].reverse());
           }
         }
       }
@@ -107,196 +155,578 @@
 
     // ── Parts ─────────────────────────────────────────────────────────────────
     const PARTS = [
-      { id: 1, label: "Part 1 — Single Negative Charge",
-        hint: "Observe: where do field lines point? Try increasing the magnitude to 4q.",
-        preset: [{ q: -1, mag: 2, x: W/2, y: H/2 }] },
-      { id: 2, label: "Part 2 — Single Positive Charge",
-        hint: "Where do field lines begin and end? Compare to Part 1.",
-        preset: [{ q: 1, mag: 2, x: W/2, y: H/2 }] },
-      { id: 3, label: "Part 3 — Unlike Charges (Dipole)",
-        hint: "Try different magnitudes on each charge and see how lines redistribute.",
-        preset: [{ q: 1, mag: 2, x: W/2 - 100, y: H/2 }, { q: -1, mag: 2, x: W/2 + 100, y: H/2 }] },
-      { id: 4, label: "Part 4 — Like Charges",
-        hint: "Try making one charge stronger — how does the neutral point shift?",
-        preset: [{ q: 1, mag: 2, x: W/2 - 100, y: H/2 }, { q: 1, mag: 2, x: W/2 + 100, y: H/2 }] },
-      { id: 5, label: "Part 5 — Charge + Conducting Plate",
-        hint: "Drag the charge closer and farther from the plate. Lines hit the surface at exactly 90°. Toggle 'Show image charge' to reveal why.",
-        preset: [{ q: 1, mag: 2, x: W/2 - 80, y: H/2 }],
-        plate: true },
+      {
+        id: 1,
+        label: "Part 1 — Negative Charge",
+        subtitle: "The electric field due to a negatively charged object",
+        instructions: [
+          "Move the compass close to the charge and observe which way the arrow points.",
+          "Click to stamp an arrow at that position (pointing in the field direction).",
+          "Move the compass so the new arrow's tail meets the last arrow's head, then click again.",
+          "Continue outward to trace a full field line off the edge of the canvas.",
+          "Repeat from 3–4 different starting positions around the charge.",
+        ],
+        hint: "The compass arrow points in the direction of the electric field — the direction a positive test charge would be pushed.",
+        preset: [{ q: -1, mag: 2, x: W / 2, y: H / 2 }],
+        questions: [
+          "1. Where do the electric field lines end?",
+          "2. Where do the electric field lines begin?",
+          "3. How many other electric field lines could you have drawn?",
+        ],
+      },
+      {
+        id: 2,
+        label: "Part 2 — Positive Charge",
+        subtitle: "The electric field due to a positively charged object",
+        instructions: [
+          "Use the same technique — move the compass and stamp arrows head-to-tail.",
+          "Trace field lines from 3–4 starting positions close to the positive charge.",
+          "Compare the arrow directions to Part 1.",
+        ],
+        hint: "How does the compass orientation near a positive charge differ from near a negative one?",
+        preset: [{ q: 1, mag: 2, x: W / 2, y: H / 2 }],
+        questions: [
+          "1. Where do the electric field lines begin?",
+          "2. Where do the field lines end?",
+          "3. How is this pattern different from Part 1?",
+        ],
+      },
+      {
+        id: 3,
+        label: "Part 3 — Unlike Charges (+/−)",
+        subtitle: "The electric field between two opposite charges",
+        instructions: [
+          "Start near the positive (+) charge and stamp arrows following the compass.",
+          "Trace head-to-tail until the field line reaches the negative (−) charge.",
+          "Repeat from enough starting points that you could predict any field line.",
+          "Check: do any of your field lines cross?",
+        ],
+        hint: "Start from the + charge. Where does the field line end up?",
+        preset: [
+          { q: 1, mag: 2, x: W / 2 - 110, y: H / 2 },
+          { q: -1, mag: 2, x: W / 2 + 110, y: H / 2 },
+        ],
+        questions: [
+          "1. Where do the field lines begin and end?",
+          "2. Do the field lines ever cross? Why not?",
+          "3. Where is the field the strongest? How can you tell from the field lines?",
+        ],
+      },
+      {
+        id: 4,
+        label: "Part 4 — Like Charges",
+        subtitle: "The electric field between two same-sign charges",
+        instructions: [
+          "Map the field starting near each charge and stamping arrows head-to-tail.",
+          "Find the neutral point between the charges where the compass wobbles.",
+          "Notice what happens to field lines in the region between the two charges.",
+        ],
+        hint: "There is a point between the charges where the E-field is nearly zero. Can you find it?",
+        preset: [
+          { q: 1, mag: 2, x: W / 2 - 110, y: H / 2 },
+          { q: 1, mag: 2, x: W / 2 + 110, y: H / 2 },
+        ],
+        questions: [
+          "1. Where do the field lines begin and end?",
+          "2. Do the field lines ever cross? Why not?",
+          "3. Where is the neutral point? What happens to the compass there?",
+        ],
+      },
+      {
+        id: 5,
+        label: "Part 5 — Conducting Plate",
+        subtitle: "The electric field near a charge and a conducting sheet",
+        instructions: [
+          "Map the field between the charge and the conducting plate.",
+          "Pay close attention to the angle at which field lines hit the plate surface.",
+          "Drag the plate left or right to change its distance from the charge.",
+          "Enable 'Show image charge' to understand why the field bends as it does.",
+        ],
+        hint: "Look at the angle where stamped arrows meet the plate. What do you notice?",
+        preset: [{ q: 1, mag: 2, x: 160, y: H / 2 }],
+        plate: true,
+        questions: [
+          "1. At what angle do the field lines meet the conducting surface?",
+          "2. What charge distribution appears on the near face of the plate? Why?",
+          "3. Enable 'Show image charge' — how does this explain the field pattern you see?",
+        ],
+      },
+      {
+        id: 6,
+        label: "Part 6 — Parallel Plates",
+        subtitle: "The electric field between two charged conducting plates (capacitor)",
+        instructions: [
+          "Move the compass between the plates — note the field direction and uniformity.",
+          "Adjust the charge magnitude on each plate using the controls below.",
+          "Drag the plates closer together and farther apart. What changes?",
+          "Switch both plates to the same sign and compare to the opposite-sign case.",
+        ],
+        hint: "Between opposite-sign plates, do the field lines stay parallel? Move the compass from the top to the bottom of the gap — does the direction change?",
+        preset: [],
+        parallelPlates: true,
+        questions: [
+          "1. Describe the electric field between the plates (direction, uniformity).",
+          "2. What happens to field strength when you increase the charge magnitude?",
+          "3. What happens to the field outside the plates? Compare to inside.",
+          "4. What real-world device works on this principle? Where is it used?",
+        ],
+      },
     ];
 
     const MAG_COLORS_POS = ["", "#f4a261", "#e8622a", "#c93a0a", "#8b1a00"];
     const MAG_COLORS_NEG = ["", "#74b9ff", "#3a8fe8", "#1a5ec9", "#0a2e8b"];
 
+    // ── Compass SVG ───────────────────────────────────────────────────────────
+    function CompassSVG({ x, y, angle, weak }) {
+      const BL = 32, BH = 15, HL = BL / 2;
+      return (
+        <g transform={`translate(${x},${y}) rotate(${angle})`} style={{ pointerEvents: "none" }}>
+          <circle r={28} fill="none"
+            stroke={weak ? "rgba(100,100,100,0.2)" : "rgba(120,210,150,0.18)"}
+            strokeWidth={1.5} strokeDasharray={weak ? "3 3" : "none"} />
+          <rect x={-HL - 1} y={-BH / 2} width={HL + 1} height={BH}
+            fill={weak ? "rgba(80,80,80,0.35)" : "rgba(80,130,220,0.28)"}
+            stroke={weak ? "#3a3a3a" : "#74b9ff"} strokeWidth={1.5} rx={3} />
+          <rect x={0} y={-BH / 2} width={HL} height={BH}
+            fill={weak ? "rgba(80,80,80,0.35)" : "rgba(220,120,60,0.28)"}
+            stroke={weak ? "#3a3a3a" : "#f4a261"} strokeWidth={1.5} rx={3} />
+          <line x1={0} y1={-BH / 2} x2={0} y2={BH / 2}
+            stroke="rgba(255,255,255,0.18)" strokeWidth={1} />
+          <line x1={-HL + 5} y1={0} x2={HL - 7} y2={0}
+            stroke={weak ? "#444" : "rgba(255,255,255,0.88)"} strokeWidth={1.8} />
+          <polygon points={`${HL - 2},0 ${HL - 8},-4 ${HL - 8},4`}
+            fill={weak ? "#444" : "rgba(255,255,255,0.88)"} />
+          <text x={-HL / 2 - 1} y={4} textAnchor="middle"
+            fill={weak ? "#333" : "#74b9ff"} fontSize={9} fontWeight="bold"
+            style={{ userSelect: "none" }}>−</text>
+          <text x={HL / 2} y={4} textAnchor="middle"
+            fill={weak ? "#333" : "#f4a261"} fontSize={9} fontWeight="bold"
+            style={{ userSelect: "none" }}>+</text>
+        </g>
+      );
+    }
+
+    // ── Question component ────────────────────────────────────────────────────
     function Question({ pid, qid, label, answers, setAnswers }) {
       const key = `${pid}-${qid}`;
       return (
-        <div style={{ marginBottom: 12 }}>
-          <div style={{ fontSize: 11, color: "#888", marginBottom: 4, lineHeight: 1.4 }}>{label}</div>
-          <textarea value={answers[key] || ""} onChange={e => setAnswers(a => ({ ...a, [key]: e.target.value }))}
-            rows={2} style={{ width: "100%", background: "#0f1117", border: "1px solid #2a3040",
-              borderRadius: 4, color: "#c8bea0", fontSize: 11, padding: "5px 7px", resize: "vertical",
-              fontFamily: "Georgia, serif", boxSizing: "border-box" }} />
+        <div style={{ marginBottom: 11 }}>
+          <div style={{ fontSize: 11, color: "#888", marginBottom: 4, lineHeight: 1.45 }}>{label}</div>
+          <textarea
+            value={answers[key] || ""}
+            onChange={e => setAnswers(a => ({ ...a, [key]: e.target.value }))}
+            rows={2}
+            style={{
+              width: "100%", background: "#0f1117", border: "1px solid #2a3040",
+              borderRadius: 4, color: "#c8bea0", fontSize: 11, padding: "5px 7px",
+              resize: "vertical", fontFamily: "Georgia, serif", boxSizing: "border-box",
+            }}
+          />
         </div>
       );
     }
 
+    // ── App ───────────────────────────────────────────────────────────────────
     function App() {
-      const [partIdx, setPartIdx] = useState(0);
-      const [charges, setCharges] = useState(PARTS[0].preset.map((c, i) => ({ ...c, id: i })));
-      const [nextId, setNextId] = useState(10);
-      const [addType, setAddType] = useState(1);
-      const [addMag, setAddMag] = useState(2);
+      const [partIdx, setPartIdx]     = useState(0);
+      const [charges, setCharges]     = useState(() => PARTS[0].preset.map((c, i) => ({ ...c, id: i })));
+      const [nextId, setNextId]       = useState(10);
+      const [addType, setAddType]     = useState(1);
+      const [addMag, setAddMag]       = useState(2);
       const [selectedId, setSelectedId] = useState(null);
-      const [dragging, setDragging] = useState(null);
+      const [dragging, setDragging]   = useState(null);   // dragging charge id
+      const [mode, setMode]           = useState("compass");
+      const [compass, setCompass]     = useState(null);
+      const [stamps, setStamps]       = useState([]);
+      const [showLines, setShowLines] = useState(false);
       const [showVectors, setShowVectors] = useState(false);
-      const [showLines, setShowLines] = useState(true);
       const [showImage, setShowImage] = useState(false);
-      const [answers, setAnswers] = useState({});
+      const [answers, setAnswers]     = useState({});
+
+      // Part 5 – draggable conducting plate
+      const [plateX, setPlateX]               = useState(380);
+      const [draggingPlate, setDraggingPlate] = useState(false);
+
+      // Part 6 – parallel plates
+      const [leftPlateX, setLeftPlateX]               = useState(210);
+      const [rightPlateX, setRightPlateX]             = useState(490);
+      const [leftMag, setLeftMag]                     = useState(2);
+      const [rightMag, setRightMag]                   = useState(2);
+      const [leftSign, setLeftSign]                   = useState(1);    // +1 or -1
+      const [rightSign, setRightSign]                 = useState(-1);
+      const [draggingLeftPlate, setDraggingLeftPlate] = useState(false);
+      const [draggingRightPlate, setDraggingRightPlate] = useState(false);
+
       const svgRef = useRef();
       const part = PARTS[partIdx];
-      const hasPlate = !!part.plate;
+      const hasPlate         = !!part.plate;
+      const hasParallelPlates = !!part.parallelPlates;
 
-      const fieldLines = showLines && charges.length > 0 ? getFieldLines(charges, hasPlate) : [];
+      // Generate plate charges for Part 6
+      const leftPlateCharges = useMemo(
+        () => hasParallelPlates ? genPlateCharges(leftPlateX, leftSign, leftMag, 100) : [],
+        [hasParallelPlates, leftPlateX, leftSign, leftMag]
+      );
+      const rightPlateCharges = useMemo(
+        () => hasParallelPlates ? genPlateCharges(rightPlateX, rightSign, rightMag, 200) : [],
+        [hasParallelPlates, rightPlateX, rightSign, rightMag]
+      );
 
-      const gridVectors = [];
-      if (showVectors && charges.length > 0) {
+      // Unified charge list used for physics
+      const physicsCharges = useMemo(
+        () => hasParallelPlates ? [...leftPlateCharges, ...rightPlateCharges] : charges,
+        [hasParallelPlates, charges, leftPlateCharges, rightPlateCharges]
+      );
+
+      // Field lines
+      const fieldLines = useMemo(() => {
+        if (!showLines) return [];
+        if (hasParallelPlates) {
+          return computeParallelPlateLines(
+            leftPlateCharges, rightPlateCharges,
+            leftPlateX, rightPlateX,
+            leftSign, rightSign
+          );
+        }
+        if (physicsCharges.length === 0) return [];
+        return computeFieldLines(physicsCharges, hasPlate ? plateX : null);
+      }, [showLines, physicsCharges, hasPlate, plateX,
+          hasParallelPlates, leftPlateCharges, rightPlateCharges,
+          leftPlateX, rightPlateX, leftSign, rightSign]);
+
+      // Vector grid
+      const gridVectors = useMemo(() => {
+        if (!showVectors || physicsCharges.length === 0) return [];
+        const vecs = [];
         for (let gx = GRID_SPACING; gx < W; gx += GRID_SPACING) {
           for (let gy = GRID_SPACING; gy < H; gy += GRID_SPACING) {
-            if (hasPlate && gx >= PLATE_X) continue;
-            const { ex, ey } = getField(charges, gx, gy, hasPlate);
+            if (hasPlate && gx >= plateX) continue;
+            if (hasParallelPlates) {
+              if (Math.abs(gx - leftPlateX) <= PP_VW || Math.abs(gx - rightPlateX) <= PP_VW) continue;
+            }
+            const { ex, ey } = getField(physicsCharges, gx, gy, hasPlate ? plateX : null);
             const mag = Math.sqrt(ex * ex + ey * ey);
             if (mag < 0.1) continue;
             const scale = Math.min(ARROW_SCALE, ARROW_SCALE * Math.log1p(mag) / Math.log1p(200));
-            gridVectors.push({ x: gx, y: gy, dx: (ex / mag) * scale, dy: (ey / mag) * scale });
+            vecs.push({ x: gx, y: gy, dx: (ex / mag) * scale, dy: (ey / mag) * scale });
           }
         }
-      }
+        return vecs;
+      }, [showVectors, physicsCharges, hasPlate, plateX, hasParallelPlates, leftPlateX, rightPlateX]);
 
       const selectedCharge = charges.find(c => c.id === selectedId) || null;
-      const imageCharges = hasPlate ? charges.map(c => ({
-        ...c, q: -c.q, x: 2 * PLATE_X - c.x, id: -(c.id + 1000)
-      })) : [];
 
-      const loadPart = (idx) => {
-        setPartIdx(idx); setCharges(PARTS[idx].preset.map((c, i) => ({ ...c, id: i })));
-        setNextId(10); setSelectedId(null); setShowImage(false);
-      };
+      const imageCharges = useMemo(
+        () => hasPlate
+          ? charges.map(c => ({ ...c, q: -c.q, x: 2 * plateX - c.x, id: -(c.id + 1000) }))
+          : [],
+        [hasPlate, charges, plateX]
+      );
 
-      const handleSvgClick = (e) => {
-        if (dragging !== null) return;
+      const getSvgPos = e => {
         const rect = svgRef.current.getBoundingClientRect();
-        const x = e.clientX - rect.left, y = e.clientY - rect.top;
-        if (hasPlate && x >= PLATE_X - 10) return;
-        for (const c of charges) { if (Math.hypot(x - c.x, y - c.y) < 22) return; }
-        const newId = nextId;
-        setCharges(prev => [...prev, { q: addType, mag: addMag, x, y, id: newId }]);
-        setSelectedId(newId); setNextId(n => n + 1);
+        return { x: e.clientX - rect.left, y: e.clientY - rect.top };
       };
 
-      const startDrag = (e, id) => { e.stopPropagation(); setSelectedId(id); setDragging(id); };
-      const onMouseMove = (e) => {
-        if (dragging === null) return;
-        const rect = svgRef.current.getBoundingClientRect();
-        let x = e.clientX - rect.left, y = e.clientY - rect.top;
-        if (hasPlate) x = Math.min(x, PLATE_X - 30);
-        setCharges(prev => prev.map(c => c.id === dragging ? { ...c, x, y } : c));
+      const nearCharge = compass
+        ? charges.some(c => Math.hypot(compass.x - c.x, compass.y - c.y) < 26)
+        : false;
+
+      const updateCompass = (x, y) => {
+        if (hasPlate && x >= plateX) { setCompass(null); return; }
+        if (hasParallelPlates) {
+          if (Math.abs(x - leftPlateX) <= PP_VW + 2 || Math.abs(x - rightPlateX) <= PP_VW + 2) {
+            setCompass(null); return;
+          }
+        }
+        const { ex, ey } = getField(physicsCharges, x, y, hasPlate ? plateX : null);
+        const mag = Math.sqrt(ex * ex + ey * ey);
+        const weak = mag < 12;
+        const angle = mag > 0.001
+          ? Math.atan2(ey, ex) * 180 / Math.PI
+          : (compass ? compass.angle : 0);
+        setCompass({ x, y, angle, weak });
       };
-      const onMouseUp = () => setDragging(null);
+
+      const anyDragging = dragging !== null || draggingPlate || draggingLeftPlate || draggingRightPlate;
+
+      const handleMouseMove = e => {
+        const { x, y } = getSvgPos(e);
+
+        if (draggingPlate) {
+          const nx = Math.max(100, Math.min(W - 50, x));
+          setPlateX(nx);
+          // Nudge charges away from the plate if they end up inside it
+          setCharges(prev => prev.map(c => c.x >= nx - 32 ? { ...c, x: nx - 40 } : c));
+          return;
+        }
+        if (draggingLeftPlate) {
+          setLeftPlateX(Math.max(50, Math.min(rightPlateX - 90, x)));
+          return;
+        }
+        if (draggingRightPlate) {
+          setRightPlateX(Math.max(leftPlateX + 90, Math.min(W - 50, x)));
+          return;
+        }
+        if (dragging !== null) {
+          let nx = Math.max(10, Math.min(W - 10, x));
+          let ny = Math.max(10, Math.min(H - 10, y));
+          if (hasPlate) nx = Math.min(nx, plateX - 32);
+          setCharges(prev => prev.map(c => c.id === dragging ? { ...c, x: nx, y: ny } : c));
+          return;
+        }
+        if (mode === "compass") updateCompass(x, y);
+      };
+
+      const handleMouseUp = () => {
+        setDragging(null);
+        setDraggingPlate(false);
+        setDraggingLeftPlate(false);
+        setDraggingRightPlate(false);
+      };
+
+      const handleClick = e => {
+        if (anyDragging) return;
+        const { x, y } = getSvgPos(e);
+
+        if (mode === "addCharge" && !hasParallelPlates) {
+          if (hasPlate && x >= plateX - 10) return;
+          for (const c of charges) { if (Math.hypot(x - c.x, y - c.y) < 24) return; }
+          const newId = nextId;
+          setCharges(prev => [...prev, { q: addType, mag: addMag, x, y, id: newId }]);
+          setSelectedId(newId);
+          setNextId(n => n + 1);
+        } else {
+          if (!compass) return;
+          if (hasPlate && x >= plateX) return;
+          // Don't stamp inside plate bodies
+          if (hasParallelPlates) {
+            if (Math.abs(x - leftPlateX) <= PP_VW + 2 || Math.abs(x - rightPlateX) <= PP_VW + 2) return;
+          }
+          for (const c of charges) { if (Math.hypot(x - c.x, y - c.y) < 22) return; }
+          setStamps(prev => [...prev, { x, y, angle: compass.angle, id: Date.now() + Math.random() }]);
+        }
+      };
+
+      const startDrag = (e, id) => {
+        e.stopPropagation();
+        setSelectedId(id);
+        setDragging(id);
+        setCompass(null);
+      };
+
       const removeCharge = (e, id) => {
         e.preventDefault();
         setCharges(prev => prev.filter(c => c.id !== id));
         if (selectedId === id) setSelectedId(null);
       };
-      const updateSelectedMag = (mag) => setCharges(prev => prev.map(c => c.id === selectedId ? { ...c, mag } : c));
-      const chargeRadius = (mag) => 14 + mag * 3;
+
+      const updateSelectedMag = mag =>
+        setCharges(prev => prev.map(c => c.id === selectedId ? { ...c, mag } : c));
+
+      const chargeRadius = mag => 14 + mag * 3;
+
+      const loadPart = idx => {
+        setPartIdx(idx);
+        setCharges(PARTS[idx].preset.map((c, i) => ({ ...c, id: i })));
+        setNextId(10); setSelectedId(null); setDragging(null);
+        setShowImage(false); setStamps([]); setCompass(null);
+        setMode("compass"); setShowLines(false); setShowVectors(false);
+        setPlateX(380); setDraggingPlate(false);
+        setLeftPlateX(210); setRightPlateX(490);
+        setLeftMag(2); setRightMag(2);
+        setLeftSign(1); setRightSign(-1);
+        setDraggingLeftPlate(false); setDraggingRightPlate(false);
+      };
+
+      const showCompass = mode === "compass" && compass && !anyDragging && !nearCharge;
+      const canvasCursor = anyDragging ? "grabbing"
+        : mode === "compass" && !nearCharge ? "none"
+        : "crosshair";
+
+      // Induced charge symbols on conducting plate (Part 5)
+      const inducedRows = charges.flatMap((c, ci) =>
+        Array.from({ length: c.mag * 3 }, (_, si) => ({
+          y: 70 + (si / Math.max(c.mag * 3 - 1, 1)) * (H - 140),
+          nearSign:  c.q > 0 ? "−" : "+",
+          nearColor: c.q > 0 ? "#74b9ff" : "#f4a261",
+          farSign:   c.q > 0 ? "+" : "−",
+          farColor:  c.q > 0 ? "#f4a261" : "#74b9ff",
+          key: `${ci}-${si}`,
+        }))
+      );
+
+      const PLATE_VW = 28;  // visual width of Part 5 plate rect
 
       return (
-        <div style={{ fontFamily: "'Georgia', serif", background: "#0f1117", minHeight: "100vh", color: "#e8e0d0", padding: "20px" }}>
-          <div style={{ maxWidth: 980, margin: "0 auto" }}>
-            <div style={{ textAlign: "center", marginBottom: 18 }}>
-              <div style={{ fontSize: 11, letterSpacing: 4, color: "#7c9e8a", textTransform: "uppercase", marginBottom: 4 }}>Modeling Physics · E1 Unit</div>
-              <h1 style={{ fontSize: 26, fontWeight: "normal", color: "#d4c9a8", margin: 0 }}>Virtual Electric Field Mapping Lab</h1>
+        <div style={{
+          fontFamily: "'Georgia', serif", background: "#0f1117",
+          minHeight: "100vh", color: "#e8e0d0", padding: "20px"
+        }}>
+          <div style={{ maxWidth: 992, margin: "0 auto" }}>
+
+            {/* ── Header ── */}
+            <div style={{ textAlign: "center", marginBottom: 16 }}>
+              <div style={{ fontSize: 11, letterSpacing: 4, color: "#7c9e8a", textTransform: "uppercase", marginBottom: 4 }}>
+                Modeling Physics · E1 Unit
+              </div>
+              <h1 style={{ fontSize: 26, fontWeight: "normal", color: "#d4c9a8", margin: 0 }}>
+                Virtual Electric Field Mapping Lab
+              </h1>
+              <div style={{ fontSize: 12, color: "#444", marginTop: 5 }}>
+                Move the electrostatic compass to sense the field direction · Click to stamp an arrow · Trace field lines head-to-tail
+              </div>
             </div>
 
-            <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
+            {/* ── Part tabs ── */}
+            <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
               {PARTS.map((p, i) => (
                 <button key={p.id} onClick={() => loadPart(i)}
-                  style={{ padding: "6px 12px", fontSize: 12, borderRadius: 4, border: "1px solid",
+                  style={{
+                    padding: "6px 14px", fontSize: 12, borderRadius: 4, border: "1px solid",
                     background: i === partIdx ? "#2a5c3f" : "#1a1f2a",
                     borderColor: i === partIdx ? "#4a9e6f" : "#333",
-                    color: i === partIdx ? "#a8e6c0" : "#888", cursor: "pointer" }}>
+                    color: i === partIdx ? "#a8e6c0" : "#777", cursor: "pointer",
+                  }}>
                   Part {p.id}
                 </button>
               ))}
             </div>
 
-            <div style={{ display: "flex", gap: 18 }}>
-              <div style={{ flex: 1 }}>
+            <div style={{ display: "flex", gap: 16 }}>
+
+              {/* ── Canvas column ── */}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ marginBottom: 6, display: "flex", alignItems: "baseline", gap: 10 }}>
+                  <span style={{ fontSize: 14, color: "#7c9e8a", fontWeight: "bold" }}>{part.label}</span>
+                  <span style={{ fontSize: 11, color: "#555", fontStyle: "italic" }}>{part.subtitle}</span>
+                </div>
+
+                {/* SVG canvas */}
                 <div style={{ background: "#151820", borderRadius: 8, border: "1px solid #2a3040", overflow: "hidden" }}>
                   <svg ref={svgRef} width={W} height={H}
-                    style={{ display: "block", cursor: dragging ? "grabbing" : "crosshair" }}
-                    onClick={handleSvgClick} onMouseMove={onMouseMove} onMouseUp={onMouseUp} onMouseLeave={onMouseUp}>
+                    style={{ display: "block", cursor: canvasCursor, touchAction: "none" }}
+                    onClick={handleClick}
+                    onMouseMove={handleMouseMove}
+                    onMouseUp={handleMouseUp}
+                    onMouseLeave={() => { setCompass(null); handleMouseUp(); }}>
+
                     <defs>
                       <marker id="arr-vec" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
                         <path d="M0,0 L0,6 L6,3 z" fill="rgba(180,220,180,0.7)" />
                       </marker>
                       {hasPlate && (
-                        <clipPath id="left-of-plate">
-                          <rect x={0} y={0} width={PLATE_X} height={H} />
+                        <clipPath id="clip-plate">
+                          <rect x={0} y={0} width={plateX} height={H} />
                         </clipPath>
                       )}
                     </defs>
 
-                    {/* Grid lines */}
-                    {Array.from({ length: Math.floor(W/50)+1 }, (_, i) => (
-                      <line key={`gv${i}`} x1={i*50} y1={0} x2={i*50} y2={H} stroke="#1e2535" strokeWidth={0.5} />
+                    {/* Background grid */}
+                    {Array.from({ length: Math.floor(W / 50) + 1 }, (_, i) => (
+                      <line key={`gv${i}`} x1={i * 50} y1={0} x2={i * 50} y2={H} stroke="#1e2535" strokeWidth={0.5} />
                     ))}
-                    {Array.from({ length: Math.floor(H/50)+1 }, (_, i) => (
-                      <line key={`gh${i}`} x1={0} y1={i*50} x2={W} y2={i*50} stroke="#1e2535" strokeWidth={0.5} />
+                    {Array.from({ length: Math.floor(H / 50) + 1 }, (_, i) => (
+                      <line key={`gh${i}`} x1={0} y1={i * 50} x2={W} y2={i * 50} stroke="#1e2535" strokeWidth={0.5} />
                     ))}
 
-                    {/* Conductor */}
-                    {hasPlate && (
-                      <g>
-                        {/* Dark out the region behind the plate */}
-                        <rect x={PLATE_X} y={0} width={W - PLATE_X} height={H} fill="rgba(15,17,23,0.9)" />
-                        {/* Plate body */}
-                        <rect x={PLATE_X} y={30} width={26} height={H - 60} fill="#2a3245" stroke="#4a5a7a" strokeWidth={2} rx={3} />
-                        {/* Near-face induced − charges */}
-                        {charges.map((c, ci) => Array.from({ length: c.mag * 3 }, (_, si) => (
-                          <text key={`near-${ci}-${si}`}
-                            x={PLATE_X + 5} y={70 + (si / (c.mag * 3 - 0.5)) * (H - 140)}
-                            fill={c.q > 0 ? "#74b9ff" : "#f4a261"} fontSize={12} fontWeight="bold"
-                            style={{ userSelect: "none", pointerEvents: "none" }}>
-                            {c.q > 0 ? "−" : "+"}
-                          </text>
-                        )))}
-                        {/* Far-face induced + charges */}
-                        {charges.map((c, ci) => Array.from({ length: c.mag * 3 }, (_, si) => (
-                          <text key={`far-${ci}-${si}`}
-                            x={PLATE_X + 17} y={70 + (si / (c.mag * 3 - 0.5)) * (H - 140)}
-                            fill={c.q > 0 ? "#f4a261" : "#74b9ff"} fontSize={12} fontWeight="bold"
-                            style={{ userSelect: "none", pointerEvents: "none" }}>
-                            {c.q > 0 ? "+" : "−"}
-                          </text>
-                        )))}
-                        <text x={PLATE_X + 13} y={H - 14} textAnchor="middle" fill="#4a5a7a" fontSize={9}
-                          style={{ userSelect: "none" }}>conductor</text>
-                      </g>
-                    )}
+                    {/* ── Part 5: draggable conducting plate ── */}
+                    {hasPlate && (() => {
+                      const px = plateX;
+                      return (
+                        <g>
+                          {/* Shaded conductor region to the right */}
+                          <rect x={px} y={0} width={W - px} height={H} fill="rgba(15,17,23,0.93)" />
+                          {/* Plate body */}
+                          <rect x={px} y={30} width={PLATE_VW} height={H - 60}
+                            fill="#202840" stroke="#4a5a7a" strokeWidth={2} rx={3}
+                            style={{ cursor: "ew-resize" }}
+                            onMouseDown={e => { e.stopPropagation(); setDraggingPlate(true); setCompass(null); }} />
+                          {/* Drag cue */}
+                          <text x={px + PLATE_VW / 2} y={H / 2 - 14} textAnchor="middle"
+                            fill="#3a5a8a" fontSize={11} style={{ userSelect: "none", pointerEvents: "none" }}>⟺</text>
+                          <text x={px + PLATE_VW / 2} y={H / 2 - 2} textAnchor="middle"
+                            fill="#2a3a5a" fontSize={7} style={{ userSelect: "none", pointerEvents: "none" }}>drag</text>
+                          {/* Induced surface charges */}
+                          {inducedRows.map(row => (
+                            <g key={row.key}>
+                              <text x={px + 6}  y={row.y} fill={row.nearColor} fontSize={12} fontWeight="bold"
+                                style={{ userSelect: "none", pointerEvents: "none" }}>{row.nearSign}</text>
+                              <text x={px + 19} y={row.y} fill={row.farColor}  fontSize={12} fontWeight="bold"
+                                style={{ userSelect: "none", pointerEvents: "none" }}>{row.farSign}</text>
+                            </g>
+                          ))}
+                          <text x={px + PLATE_VW / 2} y={H - 12} textAnchor="middle"
+                            fill="#3a4a6a" fontSize={9} style={{ userSelect: "none", pointerEvents: "none" }}>conductor</text>
+                        </g>
+                      );
+                    })()}
 
-                    {/* Field lines (clipped left of plate) */}
-                    <g clipPath={hasPlate ? "url(#left-of-plate)" : undefined}>
-                      {fieldLines.map(({ pts }, li) => {
+                    {/* ── Part 6: parallel plates ── */}
+                    {hasParallelPlates && (() => {
+                      const lCol = leftSign  > 0 ? "#f4a261" : "#74b9ff";
+                      const rCol = rightSign > 0 ? "#f4a261" : "#74b9ff";
+                      const lLbl = leftSign  > 0 ? "+" : "−";
+                      const rLbl = rightSign > 0 ? "+" : "−";
+                      const nSym = 5;
+                      return (
+                        <g>
+                          {/* Left plate */}
+                          <rect x={leftPlateX - PP_VW} y={PP_Y1} width={PP_VW * 2} height={PP_Y2 - PP_Y1}
+                            fill="rgba(25,30,50,0.97)" stroke={lCol} strokeWidth={2.5} rx={2}
+                            style={{ cursor: "ew-resize" }}
+                            onMouseDown={e => { e.stopPropagation(); setDraggingLeftPlate(true); setCompass(null); }} />
+                          {/* Left plate inner-face symbols */}
+                          {Array.from({ length: nSym }, (_, i) => (
+                            <text key={i}
+                              x={leftPlateX + (leftSign > 0 ? PP_VW + 10 : -(PP_VW + 10))}
+                              y={PP_Y1 + 22 + i * ((PP_Y2 - PP_Y1 - 44) / (nSym - 1))}
+                              textAnchor="middle" fill={lCol} fontSize={13} fontWeight="bold"
+                              style={{ userSelect: "none", pointerEvents: "none" }}>{lLbl}</text>
+                          ))}
+                          {/* Left plate label + drag cue */}
+                          <text x={leftPlateX} y={PP_Y1 - 10} textAnchor="middle"
+                            fill={lCol} fontSize={10} style={{ userSelect: "none", pointerEvents: "none" }}>
+                            {lLbl}{leftMag}q
+                          </text>
+                          <text x={leftPlateX} y={PP_Y1 - 1} textAnchor="middle"
+                            fill="#3a5070" fontSize={9} style={{ userSelect: "none", pointerEvents: "none" }}>⟺</text>
+
+                          {/* Right plate */}
+                          <rect x={rightPlateX - PP_VW} y={PP_Y1} width={PP_VW * 2} height={PP_Y2 - PP_Y1}
+                            fill="rgba(25,30,50,0.97)" stroke={rCol} strokeWidth={2.5} rx={2}
+                            style={{ cursor: "ew-resize" }}
+                            onMouseDown={e => { e.stopPropagation(); setDraggingRightPlate(true); setCompass(null); }} />
+                          {/* Right plate inner-face symbols */}
+                          {Array.from({ length: nSym }, (_, i) => (
+                            <text key={i}
+                              x={rightPlateX + (rightSign > 0 ? PP_VW + 10 : -(PP_VW + 10))}
+                              y={PP_Y1 + 22 + i * ((PP_Y2 - PP_Y1 - 44) / (nSym - 1))}
+                              textAnchor="middle" fill={rCol} fontSize={13} fontWeight="bold"
+                              style={{ userSelect: "none", pointerEvents: "none" }}>{rLbl}</text>
+                          ))}
+                          {/* Right plate label + drag cue */}
+                          <text x={rightPlateX} y={PP_Y1 - 10} textAnchor="middle"
+                            fill={rCol} fontSize={10} style={{ userSelect: "none", pointerEvents: "none" }}>
+                            {rLbl}{rightMag}q
+                          </text>
+                          <text x={rightPlateX} y={PP_Y1 - 1} textAnchor="middle"
+                            fill="#3a5070" fontSize={9} style={{ userSelect: "none", pointerEvents: "none" }}>⟺</text>
+                        </g>
+                      );
+                    })()}
+
+                    {/* Revealed field lines */}
+                    <g clipPath={hasPlate ? "url(#clip-plate)" : undefined}>
+                      {fieldLines.map((pts, li) => {
                         if (pts.length < 2) return null;
-                        const d = pts.map((p, i) => `${i===0?"M":"L"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ");
+                        const d = pts.map((p, i) => `${i === 0 ? "M" : "L"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ");
                         const mid = Math.floor(pts.length * 0.55);
-                        const p1 = pts[mid], p2 = pts[Math.min(mid+1, pts.length-1)];
-                        const ang = Math.atan2(p2[1]-p1[1], p2[0]-p1[0]) * 180 / Math.PI;
+                        const p1 = pts[mid], p2 = pts[Math.min(mid + 1, pts.length - 1)];
+                        const ang = Math.atan2(p2[1] - p1[1], p2[0] - p1[0]) * 180 / Math.PI;
                         return (
                           <g key={li}>
-                            <path d={d} fill="none" stroke="rgba(100,180,130,0.55)" strokeWidth={1.2} />
+                            <path d={d} fill="none" stroke="rgba(100,180,130,0.5)" strokeWidth={1.3} />
                             <polygon points="-5,-3 5,0 -5,3"
                               transform={`translate(${p1[0]},${p1[1]}) rotate(${ang})`}
                               fill="rgba(120,210,150,0.85)" />
@@ -307,162 +737,351 @@
 
                     {/* Vector grid */}
                     {gridVectors.map((v, i) => (
-                      <line key={i} x1={v.x} y1={v.y} x2={v.x+v.dx} y2={v.y+v.dy}
-                        stroke="rgba(180,220,180,0.6)" strokeWidth={1.2} markerEnd="url(#arr-vec)" />
+                      <line key={i} x1={v.x} y1={v.y} x2={v.x + v.dx} y2={v.y + v.dy}
+                        stroke="rgba(180,220,180,0.55)" strokeWidth={1.2} markerEnd="url(#arr-vec)" />
                     ))}
 
-                    {/* Image charges (optional reveal) */}
-                    {hasPlate && showImage && imageCharges.map(c => {
-                      const r = chargeRadius(c.mag);
-                      const col = c.q > 0 ? MAG_COLORS_POS[c.mag] : MAG_COLORS_NEG[c.mag];
+                    {/* Stamped arrows */}
+                    {stamps.map(s => (
+                      <g key={s.id} transform={`translate(${s.x},${s.y}) rotate(${s.angle})`}
+                        style={{ pointerEvents: "none" }}>
+                        <line x1={-11} y1={0} x2={8} y2={0}
+                          stroke="rgba(215,240,155,0.92)" strokeWidth={2} />
+                        <polygon points="11,0 5,-4 5,4" fill="rgba(215,240,155,0.92)" />
+                      </g>
+                    ))}
+
+                    {/* Image charges (Part 5 reveal) — dotted line from real → image + image charge circle */}
+                    {hasPlate && showImage && imageCharges.map((ic, idx) => {
+                      const real = charges[idx];
+                      const r = chargeRadius(ic.mag);
+                      const col = ic.q > 0 ? MAG_COLORS_POS[ic.mag] : MAG_COLORS_NEG[ic.mag];
                       return (
-                        <g key={`img-${c.id}`} style={{ opacity: 0.5 }}>
-                          <circle cx={c.x} cy={c.y} r={r}
-                            fill={c.q > 0 ? "rgba(244,150,80,0.1)" : "rgba(100,160,255,0.1)"}
-                            stroke={col} strokeWidth={1.5} strokeDasharray="5 3" />
-                          <text x={c.x} y={c.y+2} textAnchor="middle" fill={col} fontSize={r+2} fontWeight="bold"
-                            style={{ userSelect:"none", pointerEvents:"none" }}>{c.q>0?"+":"−"}</text>
-                          <text x={c.x} y={c.y-r-5} textAnchor="middle" fill={col} fontSize={9}
-                            style={{ userSelect:"none", pointerEvents:"none" }}>image</text>
+                        <g key={`img-${ic.id}`}>
+                          {/* Dotted connector from real charge → image charge, passing through the plate */}
+                          {real && (
+                            <line
+                              x1={real.x} y1={real.y}
+                              x2={ic.x}   y2={ic.y}
+                              stroke="rgba(180,180,255,0.35)"
+                              strokeWidth={1.5}
+                              strokeDasharray="6 4"
+                              style={{ pointerEvents: "none" }}
+                            />
+                          )}
+                          {/* Image charge circle */}
+                          <g opacity={0.55}>
+                            <circle cx={ic.x} cy={ic.y} r={r}
+                              fill={ic.q > 0 ? "rgba(244,150,80,0.1)" : "rgba(100,160,255,0.1)"}
+                              stroke={col} strokeWidth={1.5} strokeDasharray="5 3" />
+                            <text x={ic.x} y={ic.y + 2} textAnchor="middle" fill={col}
+                              fontSize={r + 2} fontWeight="bold"
+                              style={{ userSelect: "none", pointerEvents: "none" }}>
+                              {ic.q > 0 ? "+" : "−"}
+                            </text>
+                            <text x={ic.x} y={ic.y - r - 5} textAnchor="middle" fill={col} fontSize={9}
+                              style={{ userSelect: "none", pointerEvents: "none" }}>image</text>
+                          </g>
                         </g>
                       );
                     })}
 
-                    {/* Real charges */}
-                    {charges.map(c => {
+                    {/* Draggable point charges (Parts 1–5) */}
+                    {!hasParallelPlates && charges.map(c => {
                       const r = chargeRadius(c.mag);
                       const isPos = c.q > 0;
                       const col = isPos ? MAG_COLORS_POS[c.mag] : MAG_COLORS_NEG[c.mag];
                       return (
-                        <g key={c.id} onMouseDown={e => startDrag(e, c.id)} onContextMenu={e => removeCharge(e, c.id)}
+                        <g key={c.id}
+                          onMouseDown={e => startDrag(e, c.id)}
+                          onContextMenu={e => removeCharge(e, c.id)}
                           style={{ cursor: "grab" }}>
-                          {c.id === selectedId && <circle cx={c.x} cy={c.y} r={r+6} fill="none"
-                            stroke="rgba(255,255,255,0.4)" strokeWidth={1.5} strokeDasharray="4 3" />}
+                          {c.id === selectedId && (
+                            <circle cx={c.x} cy={c.y} r={r + 7} fill="none"
+                              stroke="rgba(255,255,255,0.3)" strokeWidth={1.5} strokeDasharray="4 3" />
+                          )}
                           <circle cx={c.x} cy={c.y} r={r}
-                            fill={isPos ? `rgba(244,150,80,${0.08+c.mag*0.07})` : `rgba(100,160,255,${0.08+c.mag*0.07})`}
-                            stroke={col} strokeWidth={2} />
-                          <text x={c.x} y={c.y+2} textAnchor="middle" fill={col} fontSize={r+2} fontWeight="bold"
-                            style={{ userSelect:"none", pointerEvents:"none" }}>{isPos?"+":"−"}</text>
-                          <text x={c.x} y={c.y+r+1} textAnchor="middle" fill={col} fontSize={9} opacity={0.8}
-                            style={{ userSelect:"none", pointerEvents:"none" }}>{c.mag}q</text>
+                            fill={isPos
+                              ? `rgba(244,150,80,${0.08 + c.mag * 0.07})`
+                              : `rgba(100,160,255,${0.08 + c.mag * 0.07})`}
+                            stroke={col} strokeWidth={2.5} />
+                          <text x={c.x} y={c.y + 2} textAnchor="middle" fill={col}
+                            fontSize={r + 3} fontWeight="bold"
+                            style={{ userSelect: "none", pointerEvents: "none" }}>
+                            {isPos ? "+" : "−"}
+                          </text>
+                          <text x={c.x} y={c.y + r + 12} textAnchor="middle"
+                            fill={col} fontSize={9} opacity={0.7}
+                            style={{ userSelect: "none", pointerEvents: "none" }}>{c.mag}q</text>
                         </g>
                       );
                     })}
+
+                    {/* Live compass */}
+                    {showCompass && (
+                      <CompassSVG x={compass.x} y={compass.y} angle={compass.angle} weak={compass.weak} />
+                    )}
                   </svg>
                 </div>
 
-                {/* Controls */}
-                <div style={{ display:"flex", gap:10, marginTop:10, alignItems:"center", flexWrap:"wrap" }}>
-                  <div style={{ display:"flex", gap:6 }}>
+                {/* ── Controls row ── */}
+                <div style={{ display: "flex", gap: 8, marginTop: 9, alignItems: "center", flexWrap: "wrap" }}>
+
+                  {/* Mode toggle (Parts 1–5 only) */}
+                  {!hasParallelPlates && (
+                    <div style={{ display: "flex", border: "1px solid #2a3040", borderRadius: 5, overflow: "hidden" }}>
+                      <button onClick={() => setMode("compass")}
+                        style={{
+                          padding: "5px 14px", fontSize: 12, border: "none",
+                          background: mode === "compass" ? "#1e4a32" : "#1a1f2a",
+                          color: mode === "compass" ? "#a8e6c0" : "#555", cursor: "pointer",
+                        }}>🧭 Compass</button>
+                      <button onClick={() => setMode("addCharge")}
+                        style={{
+                          padding: "5px 14px", fontSize: 12, border: "none", borderLeft: "1px solid #2a3040",
+                          background: mode === "addCharge" ? "#2e2010" : "#1a1f2a",
+                          color: mode === "addCharge" ? "#f4a261" : "#555", cursor: "pointer",
+                        }}>⊕ Add Charge</button>
+                    </div>
+                  )}
+
+                  {/* Part 6: compass-always label */}
+                  {hasParallelPlates && (
+                    <div style={{ fontSize: 12, color: "#7c9e8a", background: "#1a1f2a", border: "1px solid #2a3040", borderRadius: 5, padding: "5px 14px" }}>
+                      🧭 Compass — hover to sense field, click to stamp arrow
+                    </div>
+                  )}
+
+                  {mode === "addCharge" && !hasParallelPlates && (<>
                     <button onClick={() => setAddType(1)}
-                      style={{ padding:"6px 14px", borderRadius:4, border:"2px solid",
-                        background: addType===1 ? "rgba(244,150,80,0.2)" : "#1a1f2a",
-                        borderColor: addType===1 ? "#f4a261" : "#333",
-                        color:"#f4a261", cursor:"pointer", fontWeight:"bold", fontSize:16 }}>+ charge</button>
+                      style={{
+                        padding: "5px 12px", borderRadius: 4, border: `2px solid ${addType === 1 ? "#f4a261" : "#333"}`,
+                        background: addType === 1 ? "rgba(244,150,80,0.2)" : "#1a1f2a",
+                        color: "#f4a261", cursor: "pointer", fontWeight: "bold",
+                      }}>+ charge</button>
                     <button onClick={() => setAddType(-1)}
-                      style={{ padding:"6px 14px", borderRadius:4, border:"2px solid",
-                        background: addType===-1 ? "rgba(100,160,255,0.2)" : "#1a1f2a",
-                        borderColor: addType===-1 ? "#74b9ff" : "#333",
-                        color:"#74b9ff", cursor:"pointer", fontWeight:"bold", fontSize:16 }}>− charge</button>
-                  </div>
-                  <div style={{ display:"flex", alignItems:"center", gap:6, background:"#1a1f2a", borderRadius:4, padding:"4px 10px", border:"1px solid #2a3040" }}>
-                    <span style={{ fontSize:11, color:"#555" }}>Magnitude:</span>
-                    {[1,2,3,4].map(m => (
-                      <button key={m} onClick={() => setAddMag(m)}
-                        style={{ width:28, height:28, borderRadius:4, border:"1px solid",
-                          background: addMag===m ? "#2a4a35" : "transparent",
-                          borderColor: addMag===m ? "#4a9e6f" : "#333",
-                          color: addMag===m ? "#a8e6c0" : "#555", cursor:"pointer", fontSize:12 }}>{m}q</button>
-                    ))}
-                  </div>
-                  <label style={{ fontSize:13, color:"#888", display:"flex", alignItems:"center", gap:6 }}>
-                    <input type="checkbox" checked={showLines} onChange={e => setShowLines(e.target.checked)} /> Field lines
+                      style={{
+                        padding: "5px 12px", borderRadius: 4, border: `2px solid ${addType === -1 ? "#74b9ff" : "#333"}`,
+                        background: addType === -1 ? "rgba(100,160,255,0.2)" : "#1a1f2a",
+                        color: "#74b9ff", cursor: "pointer", fontWeight: "bold",
+                      }}>− charge</button>
+                    <div style={{ display: "flex", gap: 4 }}>
+                      {[1, 2, 3, 4].map(m => (
+                        <button key={m} onClick={() => setAddMag(m)}
+                          style={{
+                            width: 30, height: 30, borderRadius: 4, border: "1px solid",
+                            background: addMag === m ? "#2a4a35" : "transparent",
+                            borderColor: addMag === m ? "#4a9e6f" : "#2a3040",
+                            color: addMag === m ? "#a8e6c0" : "#555", cursor: "pointer", fontSize: 11,
+                          }}>{m}q</button>
+                      ))}
+                    </div>
+                  </>)}
+
+                  {stamps.length > 0 && (
+                    <button onClick={() => setStamps([])}
+                      style={{
+                        padding: "5px 12px", fontSize: 12, borderRadius: 4,
+                        background: "#1a1f2a", border: "1px solid #2a3040", color: "#888", cursor: "pointer",
+                      }}>Clear {stamps.length} arrow{stamps.length !== 1 ? "s" : ""}</button>
+                  )}
+
+                  <label style={{ fontSize: 12, color: showLines ? "#a8e6c0" : "#555", display: "flex", alignItems: "center", gap: 5 }}>
+                    <input type="checkbox" checked={showLines} onChange={e => setShowLines(e.target.checked)} />
+                    Reveal field lines
                   </label>
-                  <label style={{ fontSize:13, color:"#888", display:"flex", alignItems:"center", gap:6 }}>
-                    <input type="checkbox" checked={showVectors} onChange={e => setShowVectors(e.target.checked)} /> Vectors
+                  <label style={{ fontSize: 12, color: "#555", display: "flex", alignItems: "center", gap: 5 }}>
+                    <input type="checkbox" checked={showVectors} onChange={e => setShowVectors(e.target.checked)} />
+                    Vectors
                   </label>
                   {hasPlate && (
-                    <label style={{ fontSize:13, color:"#a0956f", display:"flex", alignItems:"center", gap:6 }}>
-                      <input type="checkbox" checked={showImage} onChange={e => setShowImage(e.target.checked)} /> Show image charge
+                    <label style={{ fontSize: 12, color: "#a0956f", display: "flex", alignItems: "center", gap: 5 }}>
+                      <input type="checkbox" checked={showImage} onChange={e => setShowImage(e.target.checked)} />
+                      Show image charge
                     </label>
                   )}
+
                   <button onClick={() => loadPart(partIdx)}
-                    style={{ marginLeft:"auto", padding:"5px 12px", fontSize:12, borderRadius:4,
-                      background:"#1a1f2a", border:"1px solid #444", color:"#aaa", cursor:"pointer" }}>Reset</button>
+                    style={{
+                      marginLeft: "auto", padding: "5px 12px", fontSize: 12, borderRadius: 4,
+                      background: "#1a1f2a", border: "1px solid #333", color: "#777", cursor: "pointer",
+                    }}>Reset</button>
                 </div>
-                <div style={{ fontSize:11, color:"#444", marginTop:4 }}>
-                  Click canvas = add charge · Click charge = select · Drag = move · Right-click = remove
-                  {hasPlate && <span style={{ color:"#3a3020" }}> · Charges locked left of plate</span>}
+
+                {/* ── Part 6 plate controls ── */}
+                {hasParallelPlates && (
+                  <div style={{
+                    marginTop: 10, background: "#151820", border: "1px solid #2a3040",
+                    borderRadius: 8, padding: "10px 14px", display: "flex", gap: 16,
+                  }}>
+                    {/* Left plate */}
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 11, fontWeight: "bold", color: "#7c9e8a", marginBottom: 7, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                        Left Plate
+                      </div>
+                      <div style={{ display: "flex", gap: 5, marginBottom: 6 }}>
+                        <button onClick={() => setLeftSign(1)}
+                          style={{
+                            flex: 1, padding: "6px 0", borderRadius: 4, fontSize: 16, fontWeight: "bold",
+                            border: `2px solid ${leftSign > 0 ? "#f4a261" : "#2a3040"}`,
+                            background: leftSign > 0 ? "rgba(244,150,80,0.2)" : "#1a1f2a",
+                            color: "#f4a261", cursor: "pointer",
+                          }}>+</button>
+                        <button onClick={() => setLeftSign(-1)}
+                          style={{
+                            flex: 1, padding: "6px 0", borderRadius: 4, fontSize: 16, fontWeight: "bold",
+                            border: `2px solid ${leftSign < 0 ? "#74b9ff" : "#2a3040"}`,
+                            background: leftSign < 0 ? "rgba(100,160,255,0.2)" : "#1a1f2a",
+                            color: "#74b9ff", cursor: "pointer",
+                          }}>−</button>
+                      </div>
+                      <div style={{ display: "flex", gap: 4 }}>
+                        {[1, 2, 3, 4].map(m => (
+                          <button key={m} onClick={() => setLeftMag(m)}
+                            style={{
+                              flex: 1, padding: "6px 0", borderRadius: 4, border: "1px solid", fontSize: 11,
+                              background: leftMag === m ? "rgba(100,160,120,0.2)" : "transparent",
+                              borderColor: leftMag === m ? "#4a9e6f" : "#2a3040",
+                              color: leftMag === m ? "#a8e6c0" : "#555", cursor: "pointer",
+                            }}>{m}q</button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div style={{ width: 1, background: "#2a3040", alignSelf: "stretch" }} />
+
+                    {/* Right plate */}
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 11, fontWeight: "bold", color: "#7c9e8a", marginBottom: 7, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                        Right Plate
+                      </div>
+                      <div style={{ display: "flex", gap: 5, marginBottom: 6 }}>
+                        <button onClick={() => setRightSign(1)}
+                          style={{
+                            flex: 1, padding: "6px 0", borderRadius: 4, fontSize: 16, fontWeight: "bold",
+                            border: `2px solid ${rightSign > 0 ? "#f4a261" : "#2a3040"}`,
+                            background: rightSign > 0 ? "rgba(244,150,80,0.2)" : "#1a1f2a",
+                            color: "#f4a261", cursor: "pointer",
+                          }}>+</button>
+                        <button onClick={() => setRightSign(-1)}
+                          style={{
+                            flex: 1, padding: "6px 0", borderRadius: 4, fontSize: 16, fontWeight: "bold",
+                            border: `2px solid ${rightSign < 0 ? "#74b9ff" : "#2a3040"}`,
+                            background: rightSign < 0 ? "rgba(100,160,255,0.2)" : "#1a1f2a",
+                            color: "#74b9ff", cursor: "pointer",
+                          }}>−</button>
+                      </div>
+                      <div style={{ display: "flex", gap: 4 }}>
+                        {[1, 2, 3, 4].map(m => (
+                          <button key={m} onClick={() => setRightMag(m)}
+                            style={{
+                              flex: 1, padding: "6px 0", borderRadius: 4, border: "1px solid", fontSize: 11,
+                              background: rightMag === m ? "rgba(100,160,120,0.2)" : "transparent",
+                              borderColor: rightMag === m ? "#4a9e6f" : "#2a3040",
+                              color: rightMag === m ? "#a8e6c0" : "#555", cursor: "pointer",
+                            }}>{m}q</button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div style={{ fontSize: 10, color: "#2e3645", marginTop: 5, display: "flex", gap: 18, flexWrap: "wrap" }}>
+                  {!hasParallelPlates && <span>Compass: hover = sense field · click = stamp arrow</span>}
+                  {!hasParallelPlates && <span>Drag charge to move · Right-click to remove</span>}
+                  {hasPlate && <span>Drag plate ⟺ to reposition</span>}
+                  {hasParallelPlates && <span>Hover to sense field · Click to stamp arrow · Drag plates ⟺ to reposition</span>}
                 </div>
               </div>
 
-              {/* Right panel */}
-              <div style={{ width:240, display:"flex", flexDirection:"column", gap:12 }}>
-                <div style={{ background:"#151820", borderRadius:8, border:`1px solid ${selectedCharge?"#3a5a44":"#2a3040"}`, padding:14, minHeight:100 }}>
-                  {selectedCharge ? (
-                    <>
-                      <div style={{ fontSize:12, fontWeight:"bold", color:"#7c9e8a", marginBottom:10 }}>
-                        Selected: <span style={{ color: selectedCharge.q>0?"#f4a261":"#74b9ff", fontSize:15 }}>
-                          {selectedCharge.q>0?"+":"−"}{selectedCharge.mag}q
+              {/* ── Right panel ── */}
+              <div style={{ width: 248, display: "flex", flexDirection: "column", gap: 10 }}>
+
+                {/* Procedure */}
+                <div style={{ background: "#151820", borderRadius: 8, border: "1px solid #2a3040", padding: 14 }}>
+                  <div style={{ fontSize: 11, fontWeight: "bold", color: "#7c9e8a", marginBottom: 9, letterSpacing: 0.5, textTransform: "uppercase" }}>
+                    Procedure
+                  </div>
+                  {part.instructions.map((step, i) => (
+                    <div key={i} style={{ display: "flex", gap: 8, marginBottom: 7, fontSize: 11, color: "#a0956f", lineHeight: 1.5 }}>
+                      <span style={{ color: "#2d6e44", flexShrink: 0, fontWeight: "bold", marginTop: 1 }}>{i + 1}.</span>
+                      <span>{step}</span>
+                    </div>
+                  ))}
+                  <div style={{ fontSize: 10, color: "#3a5040", marginTop: 8, paddingTop: 8, borderTop: "1px solid #1e3028", lineHeight: 1.5 }}>
+                    💡 {part.hint}
+                  </div>
+                </div>
+
+                {/* Selected charge inspector (Parts 1–5) */}
+                {!hasParallelPlates && (
+                  <div style={{
+                    background: "#151820", borderRadius: 8,
+                    border: `1px solid ${selectedCharge ? "#3a5a44" : "#2a3040"}`,
+                    padding: 14, minHeight: 72,
+                  }}>
+                    {selectedCharge ? (<>
+                      <div style={{ fontSize: 12, fontWeight: "bold", color: "#7c9e8a", marginBottom: 9 }}>
+                        Selected:{" "}
+                        <span style={{ color: selectedCharge.q > 0 ? "#f4a261" : "#74b9ff", fontSize: 15 }}>
+                          {selectedCharge.q > 0 ? "+" : "−"}{selectedCharge.mag}q
                         </span>
-                        <span style={{ color:"#444", fontWeight:"normal", fontSize:10, marginLeft:6 }}>({BASE_LINES*selectedCharge.mag} lines)</span>
                       </div>
-                      <div style={{ fontSize:11, color:"#555", marginBottom:8 }}>Adjust magnitude:</div>
-                      <div style={{ display:"flex", gap:6 }}>
-                        {[1,2,3,4].map(m => (
+                      <div style={{ fontSize: 10, color: "#444", marginBottom: 6 }}>Adjust magnitude:</div>
+                      <div style={{ display: "flex", gap: 5 }}>
+                        {[1, 2, 3, 4].map(m => (
                           <button key={m} onClick={() => updateSelectedMag(m)}
-                            style={{ flex:1, padding:"8px 0", borderRadius:4, border:"1px solid",
-                              background: selectedCharge.mag===m?(selectedCharge.q>0?"rgba(244,150,80,0.25)":"rgba(100,160,255,0.25)"):"transparent",
-                              borderColor: selectedCharge.mag===m?(selectedCharge.q>0?"#f4a261":"#74b9ff"):"#2a3040",
-                              color: selectedCharge.mag===m?(selectedCharge.q>0?"#f4a261":"#74b9ff"):"#444",
-                              cursor:"pointer", fontSize:12, fontWeight:"bold" }}>{m}q</button>
+                            style={{
+                              flex: 1, padding: "7px 0", borderRadius: 4, border: "1px solid",
+                              background: selectedCharge.mag === m
+                                ? (selectedCharge.q > 0 ? "rgba(244,150,80,0.2)" : "rgba(100,160,255,0.2)") : "transparent",
+                              borderColor: selectedCharge.mag === m
+                                ? (selectedCharge.q > 0 ? "#f4a261" : "#74b9ff") : "#2a3040",
+                              color: selectedCharge.mag === m
+                                ? (selectedCharge.q > 0 ? "#f4a261" : "#74b9ff") : "#444",
+                              cursor: "pointer", fontSize: 12, fontWeight: "bold",
+                            }}>{m}q</button>
                         ))}
                       </div>
-                    </>
-                  ) : (
-                    <div style={{ fontSize:11, color:"#3a4050", fontStyle:"italic", lineHeight:1.7 }}>
-                      Click a charge to select it, then adjust its magnitude here (1q–4q).
-                    </div>
-                  )}
+                    </>) : (
+                      <div style={{ fontSize: 11, color: "#2a3040", fontStyle: "italic", lineHeight: 1.6 }}>
+                        Click a charge to select it and adjust its magnitude (1q – 4q).
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Lab questions */}
+                <div style={{ background: "#151820", borderRadius: 8, border: "1px solid #2a3040", padding: 14, flex: 1 }}>
+                  <div style={{ fontSize: 11, fontWeight: "bold", color: "#7c9e8a", marginBottom: 10, letterSpacing: 0.5, textTransform: "uppercase" }}>
+                    Lab Questions
+                  </div>
+                  {part.questions.map((q, i) => (
+                    <Question key={i} pid={partIdx} qid={`q${i + 1}`} label={q} answers={answers} setAnswers={setAnswers} />
+                  ))}
                 </div>
 
-                <div style={{ background:"#151820", borderRadius:8, border:"1px solid #2a3040", padding:14 }}>
-                  <div style={{ fontSize:13, fontWeight:"bold", color:"#7c9e8a", marginBottom:8 }}>{part.label}</div>
-                  <div style={{ fontSize:12, color:"#a0956f", lineHeight:1.6 }}>{part.hint}</div>
-                  {hasPlate && (
-                    <div style={{ fontSize:10, color:"#3a5040", marginTop:8, lineHeight:1.5, borderTop:"1px solid #1e3a24", paddingTop:8 }}>
-                      Physics: method of images. A virtual mirror charge of opposite sign placed symmetrically behind the plate produces the exact boundary condition — field lines perpendicular to the surface, zero field inside.
-                    </div>
-                  )}
-                </div>
-
-                <div style={{ background:"#151820", borderRadius:8, border:"1px solid #2a3040", padding:14, flex:1 }}>
-                  <div style={{ fontSize:12, fontWeight:"bold", color:"#7c9e8a", marginBottom:10 }}>Lab Questions</div>
-                  {partIdx < 2 && <>
-                    <Question pid={partIdx} qid="q1" label="1. Where do field lines begin?" answers={answers} setAnswers={setAnswers} />
-                    <Question pid={partIdx} qid="q2" label="2. Where do field lines end?" answers={answers} setAnswers={setAnswers} />
-                    <Question pid={partIdx} qid="q3" label="3. How many lines could you draw?" answers={answers} setAnswers={setAnswers} />
-                  </>}
-                  {partIdx >= 2 && partIdx < 4 && <>
-                    <Question pid={partIdx} qid="q1" label="1. Where do lines begin / end?" answers={answers} setAnswers={setAnswers} />
-                    <Question pid={partIdx} qid="q2" label="2. Do field lines ever cross? Why not?" answers={answers} setAnswers={setAnswers} />
-                    <Question pid={partIdx} qid="q3" label="3. Where is the field strongest?" answers={answers} setAnswers={setAnswers} />
-                  </>}
-                  {partIdx === 4 && <>
-                    <Question pid={partIdx} qid="q1" label="1. At what angle do lines meet the plate?" answers={answers} setAnswers={setAnswers} />
-                    <Question pid={partIdx} qid="q2" label="2. What charge appears on the near face? Far face?" answers={answers} setAnswers={setAnswers} />
-                    <Question pid={partIdx} qid="q3" label="3. Enable 'Show image charge' — what does this tell you about how conductors work?" answers={answers} setAnswers={setAnswers} />
-                  </>}
-                </div>
-
-                <div style={{ background:"#0d1a12", borderRadius:8, border:"1px solid #1e3a24", padding:12 }}>
-                  <div style={{ fontSize:11, fontWeight:"bold", color:"#4a9e6f", marginBottom:8, letterSpacing:1, textTransform:"uppercase" }}>Key Concepts</div>
-                  {["Lines start on + and end on −","Arrow = force on + test charge","More charge → more field lines","Denser lines = stronger field","Lines never cross","⊥ to conductor surface","E = 0 inside a conductor"].map((txt, i) => (
-                    <div key={i} style={{ fontSize:11, color:"#6aaa7a", marginBottom:5, display:"flex", gap:6 }}>
-                      <span style={{ color:"#2d6e44" }}>▸</span> {txt}
+                {/* Key concepts */}
+                <div style={{ background: "#0d1a12", borderRadius: 8, border: "1px solid #1e3a24", padding: 12 }}>
+                  <div style={{ fontSize: 10, fontWeight: "bold", color: "#4a9e6f", marginBottom: 7, letterSpacing: 1, textTransform: "uppercase" }}>
+                    Key Concepts
+                  </div>
+                  {[
+                    "Lines start on + and end on −",
+                    "Arrow = direction of force on + test charge",
+                    "More charge → more field lines",
+                    "Denser lines = stronger field",
+                    "Field lines never cross",
+                    "Lines hit conductors at 90°",
+                    "E = 0 inside a conductor",
+                    "Parallel plates → uniform field between them",
+                  ].map((txt, i) => (
+                    <div key={i} style={{ fontSize: 10, color: "#5a9a6a", marginBottom: 4, display: "flex", gap: 5 }}>
+                      <span style={{ color: "#2d5e3a" }}>▸</span> {txt}
                     </div>
                   ))}
                 </div>
+
               </div>
             </div>
           </div>
